@@ -1,0 +1,239 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: ${SCM_REPO_NAME}-template
+metadata:
+  annotations:
+    description: jar, deployment, war, ear, compiled classes, http-routes, services etc
+    tags: java,general,springboot
+  name: ${SCM_REPO_NAME}
+objects:
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${APPNAME}
+    namespace: ${NAMESPACE}
+    labels:
+      build: ${APPNAME}
+      app: ${APPNAME}
+  spec:
+    lookupPolicy:
+      local: false
+    tags:
+      - name: ${TAG}
+        from:
+          kind: DockerImage
+          name: ${REGISTRY_URL}${APPNAME}:${TAG}
+        importPolicy: {}
+        referencePolicy:
+          type: Source
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: ${ENV}-${APPNAME}
+    labels:
+      app: ${APPNAME}
+      version: ${RELEASENO}
+      stage: ${ENV}
+      tier: ${TIER}
+  data:
+    key: empty
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      openshift.io/generated-by: ${SCM_REPO_NAME}-template
+    labels:
+      app: ${APPNAME}
+      version: ${RELEASENO}
+      stage: ${ENV}
+      tier: ${TIER}
+    name: ${ENV}-${APPNAME}
+  spec:
+    replicas: "${{REPLICA_COUNT}}"
+    selector:
+      app: ${APPNAME}
+      deploymentconfig: ${APPNAME}
+      version: ${RELEASENO}
+      stage: ${ENV}
+      tier: ${TIER}
+    template:
+      metadata:
+        annotations:
+          openshift.io/generated-by: ${SCM_REPO_NAME}-template
+        labels:
+          app: ${APPNAME}
+          deploymentconfig: ${APPNAME}
+          version: ${RELEASENO}
+          stage: ${ENV}
+          tier: ${TIER}
+      spec:
+        containers:
+        - env:
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.namespace
+          - name: CONTAINER_MEMORY_LIMIT
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.memory
+                divisor: '0'
+          - name: CONTAINER_CPU_LIMIT
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.cpu
+                divisor: '0'
+          - name: APPNAME
+            value: ${APPNAME}
+          - name: APP_EXPOSED_PORT
+            value: ${APP_EXPOSED_PORT}
+          - name: JVM_ARGS
+            value: ${JVMARGS}
+          - name: TZ
+            value: ${TIMEZONE}
+          - name: APP_PARAMETERS
+            value: ${APP_PARAMETERS}
+          - name: TIER
+            value: ${TIER}
+          - name: SPRING_PROFILES_ACTIVE
+            value: ${ENV}
+          - name: ENV
+            value: ${ENV}
+          image: ''
+          imagePullPolicy: Always
+          name: ${APPNAME}
+          ports:
+          - containerPort: "${{APP_EXPOSED_PORT}}"
+            protocol: TCP
+          resources:
+            limits:
+              cpu: ${RESOURCE_LIMIT_CPU}
+              memory: ${RESOURCE_LIMIT_MEMORY}
+            requests:
+              cpu: ${RESOURCE_REQUEST_CPU}
+              memory: ${RESOURCE_REQUEST_MEMORY}
+          volumeMounts:
+          - name: config-volume
+            mountPath: /nih/${APPNAME}
+          terminationMessagePath: /dev/termination-log
+        volumes:
+        - name: config-volume
+          configMap:
+            name: ${ENV}-${APPNAME}
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+    triggers:
+    - imageChangeParams:
+        automatic: "${{TRIGGER_AUTO_DEPLOY}}"
+        containerNames:
+        - ${APPNAME}
+        from:
+          kind: ImageStreamTag
+          namespace: ${NAMESPACE}
+          name: ${APPNAME}:${TAG}
+      type: ImageChange
+  status: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      openshift.io/generated-by: ${SCM_REPO_NAME}-template
+    labels:
+      app: ${APPNAME}
+      version: ${RELEASENO}
+      stage: ${ENV}
+      tier: ${TIER}
+    name: ${ENV}-${APPNAME}
+  spec:
+    ports:
+    - name: web-http
+      port: "${{APP_EXPOSED_PORT}}"
+      protocol: TCP
+      targetPort: "${{APP_EXPOSED_PORT}}"
+    selector:
+      app: ${APPNAME}
+      version: ${RELEASENO}
+      stage: ${ENV}
+      tier: ${TIER}
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: Route
+  metadata:
+    labels:
+      app: ${APPNAME}
+      version: ${RELEASENO}
+      stage: ${ENV}
+      tier: ${TIER}
+    name: ${ENV}-${APPNAME}
+  spec:
+    host: ${ENV}.${APPNAME}.${NAMESPACE}.${ROUTE_SUFFIX}
+    port:
+      targetPort: "${{APP_EXPOSED_PORT}}"
+    to:
+      kind: Service
+      name: ${ENV}-${APPNAME}
+  status: {}
+parameters:
+- name: APPNAME
+  description: technical application name in OpenShift
+  required: true
+- name: JVMARGS
+  description: additional parameters for the JVM (JVM-Args)
+  value: '-Xmx768m'
+- name: TIMEZONE
+  description: timezone environment variable of the pods
+  value: 'America/New_York'
+- name: TAG
+  description: Tag for the deployment with release number
+  required: true
+- name: APP_PARAMETERS
+  description: additional parameters for the application
+- name: RESOURCE_LIMIT_CPU
+  description: CPU limit of the pods
+  value: '1000m'
+- name: RESOURCE_LIMIT_MEMORY
+  description: memory limit of the pods
+  value: '1Gi'
+- name: RESOURCE_REQUEST_CPU
+  description: reserved CPU for the pods
+  value: '50m'
+- name: RESOURCE_REQUEST_MEMORY
+  description: reserved memory for the pods
+  value: '384Mi'
+- name: REPLICA_COUNT
+  description: count of replicas
+  value: "1"
+- name: ROUTE_SUFFIX
+  value: 'apps.bb841spy.eastus.aroapp.io'
+  description: suffix for the default router
+- name: NAMESPACE
+  value: 'na'
+  description: Openshift namespace
+- name: SCM_REPO_NAME
+  value: 'its'
+  description: Githib repo namespace
+- name: ENV
+  value: 'dev'
+  description: Application deployment environment name such as dev, test, stage
+- name: TIER
+  value: 'na'
+  description: which tier the app belongs to such as frontend, backend etc
+- name: RELEASENO
+  value: '1.0'
+  description: The release number
+- name: APP_EXPOSED_PORT
+  description: Application Port
+  value: "8080"
+- name: TRIGGER_AUTO_DEPLOY
+  description: On image change/update auto triggers the deployment. Suitable for some or test environment onwards
+  value: "false"
+- name: REGISTRY_URL
+  description: registry url for publishing the image openshift by default
+  value: ''
